@@ -1,35 +1,66 @@
 """
 description: todo
 """
+import torch
+import torch.cuda as cuda
 import json
 import numpy as np
+import configparser
 from network import Network
 
-# Load the trained network from the trained_network.weights file
-network = Network(10, [16, 8], 3)
-network.load('trained_network.weights')
+def calculate_additional_parameters(data, current_timestamp):
+    days_since_start = (current_timestamp - data[0]["timestamp"]) // 86400
+    day_of_year = days_since_start % 365
 
-# Load the projection data from the projection_data.json file
-with open('projection_data.json', 'r') as f:
-    projection_data = json.load(f)
+    values = np.array([point["value"] for point in data])
 
-# Extract the input data from the projection data
-inputs = np.array(projection_data['inputs'])
+    # Calculate the cumulative sum of values
+    cum_values = np.cumsum(values)
 
-# Define the number of days to project into the future
-num_days = 30
+    time = np.arange(len(cum_values))
+    slope, intercept = np.polyfit(time, cum_values, 1)
+    coef2, coef1, intercept_quad = np.polyfit(time, cum_values, 2)
 
-# Perform feedforward operation for each day of the future projection
-for i in range(num_days):
-    # Use the trained network to predict the next day's data based on the previous data
-    input_data = inputs[-10:].reshape(1, -1)
-    output_data = network.feedforward(input_data)[0]
-    
-    # Append the predicted data to the inputs array for the next iteration
-    inputs = np.vstack((inputs, output_data))
-    
-# Save the generated future projection to a file
-projection_data['generated_data'] = inputs.tolist()
+    return [
+        days_since_start,
+        day_of_year,
+        slope,
+        intercept,
+        coef1,
+        coef2,
+        intercept_quad
+    ]
 
-with open('projection_data.json', 'w') as f:
-    json.dump(projection_data, f)
+def generate_projections(trained_network, num_days=200, run_num = 0):
+    device = torch.device("cuda" if cuda.is_available() else "cpu")
+    print("Using device:", device)
+
+    network = trained_network.to(device)
+
+    with open("training_data.json", "r") as file:
+        data_points = json.load(file)
+
+    projection_data = []
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+
+    sliding_window_size = int(config.get("config", "sliding_window_size"))
+    #sliding_window_size = len(data_points)-100
+    input_size = sliding_window_size + 7
+
+    for i in range(num_days):
+        current_data = data_points[-sliding_window_size:]
+        input_data = [point["value"] for point in current_data]
+        additional_params = calculate_additional_parameters(current_data, current_data[-1]["timestamp"] + 86400)
+        input_data.extend(additional_params)
+
+        inputs = torch.tensor(input_data, dtype=torch.float32).to(device)
+        output = network(inputs)
+        projection_data.append(output.item())
+
+        data_points.append({"timestamp": current_data[-1]["timestamp"] + 86400, "value": output.item()})
+
+    with open(f"projection_data_{run_num}.json", "w") as file:
+        json.dump(projection_data, file)
+
+    return projection_data

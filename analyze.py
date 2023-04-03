@@ -1,29 +1,35 @@
 """
 description: todo
 """
-
 import json
 import matplotlib.pyplot as plt
+import numpy as np
 
-# Load the projection data from the projection_data.json file
-with open('projection_data.json', 'r') as f:
-    projection_data = json.load(f)
+def display_projections(training_file_name = "training_data.json", run_num=0):
+    # Load the training data
+    with open("training_data.json", "r") as file:
+        training_data = json.load(file)
 
-# Extract the original data and the generated data from the projection data
-original_data = projection_data['original_data']
-generated_data = projection_data['generated_data']
+    training_values = [point["value"] for point in training_data]
 
-# Define the x-axis values for the plot (i.e., the dates for each day of the projection)
-x_values = range(len(original_data), len(original_data) + len(generated_data))
+    # Load the projection data
+    with open(f"projection_data_{run_num}.json", "r") as file:
+        data = json.load(file)
 
-# Plot the original data and the generated data on the same graph
-plt.plot(range(len(original_data)), original_data, label='Original Data')
-plt.plot(x_values, generated_data, label='Generated Data')
+    # Calculate the running total for training and projection data
+    running_total_training = np.cumsum(training_values)
+    running_total_projection = np.cumsum(data) + running_total_training[-1]
 
-# Add axis labels and a legend to the plot
-plt.xlabel('Days')
-plt.ylabel('Data Values')
-plt.legend()
+    # Plot the training data
+    plt.plot(running_total_training, color='blue', label='Training Data')
 
-# Display the plot
-plt.show()
+    # Plot the projections
+    projection_start = len(training_values)
+    projection_end = projection_start + len(data)
+    plt.plot(range(projection_start, projection_end), running_total_projection, color='red', label='Projections')
+
+    plt.xlabel("Days")
+    plt.ylabel("Running Total")
+    plt.title("Generative Future Projections")
+    plt.legend()
+    plt.show()

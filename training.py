@@ -1,36 +1,78 @@
 """
 description: todo
 """
-
+import torch
+import torch.cuda as cuda
 import json
 import numpy as np
+import configparser
 from network import Network
 
-# Load the training data from the training_data.json file
-with open('training_data.json', 'r') as f:
-    training_data = json.load(f)
+def calculate_additional_parameters(data, current_timestamp):
+    days_since_start = (current_timestamp - data[0]["timestamp"]) // 86400
+    day_of_year = days_since_start % 365
 
-# Extract the input and target data from the training data
-inputs = np.array(training_data['inputs'])
-targets = np.array(training_data['targets'])
+    values = np.array([point["value"] for point in data])
 
-# Define the size of the input and output layers based on the shape of the input and target data
-input_size = inputs.shape[1]
-output_size = targets.shape[1]
+    # Calculate the cumulative sum of values
+    cum_values = np.cumsum(values)
 
-# Define the size of the hidden layers
-hidden_sizes = [16, 8]
+    time = np.arange(len(cum_values))
+    slope, intercept = np.polyfit(time, cum_values, 1)
+    coef2, coef1, intercept_quad = np.polyfit(time, cum_values, 2)
 
-# Create a neural network object
-network = Network(input_size, hidden_sizes, output_size)
+    return [
+        days_since_start,
+        day_of_year,
+        slope,
+        intercept,
+        coef1,
+        coef2,
+        intercept_quad
+    ]
 
-# Define the learning rate and number of epochs for training
-learning_rate = 0.001
-num_epochs = 1000
+def train_network(file_name="training_data.json"):
 
-# Train the network using backpropagation and the training data
-for i in range(num_epochs):
-    network.backpropagation(inputs, targets, learning_rate)
+    # Check if GPU is available
+    device = torch.device("cuda" if cuda.is_available() else "cpu")
+    print("Using device:", device)
 
-# Save the trained network to a file
-network.save('trained_network.weights')
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+
+    with open(file_name, "r") as file:
+        data_points = json.load(file)
+
+
+    sliding_window_size = int(config.get("config", "sliding_window_size"))
+    #sliding_window_size = len(data_points)-100
+    input_size = sliding_window_size + 7
+    hidden_sizes = list(map(int, config.get("config", "hidden_layer_sizes").split(", ")))
+    output_size = 1
+    network = Network(input_size, hidden_sizes, output_size).to(device)
+
+    epochs = int(config.get("config", "epochs"))
+    learning_rate = 0.001
+    criterion = torch.nn.MSELoss()
+    optimizer = torch.optim.Adam(network.parameters(), lr=learning_rate)
+
+    for epoch in range(epochs):
+        print(epoch)
+        for i in range(sliding_window_size, len(data_points)):
+            print(f"[{i - sliding_window_size}-{i}]")
+            input_data = [point["value"] for point in data_points[i - sliding_window_size:i]]
+            additional_params = calculate_additional_parameters(data_points[:i], data_points[i]["timestamp"])
+            input_data.extend(additional_params)
+
+            inputs = torch.tensor(input_data, dtype=torch.float32).to(device)
+            target = torch.tensor([data_points[i]["value"]], dtype=torch.float32).to(device)  # Wrap the target in a list
+
+            output = network(inputs)
+            loss = criterion(output, target)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+    network.save_network("trained_network.pth")
+    return network

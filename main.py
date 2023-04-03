@@ -40,10 +40,21 @@ projection_data.json
 
 """
 
-from network import Network
+import training
+import projection
+import analyze
 
-nn = Network(1,[1],1)
+def main():
+    # Train the network
+    trained_network = training.train_network("test_data.json")
 
-nn.feedforward([0.23])
+    # Generate future projections
+    projection_data = projection.generate_projections(trained_network)
+
+    # Analyze and display the projections
+    analyze.display_projections(training_file_name = "test_data.json")
+
+if __name__ == "__main__":
+    main()
 
 
